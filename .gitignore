@@ -1,0 +1,14 @@
+.venv/
+venv/
+__pycache__/
+*.pyc
+*.pth
+*.joblib
+processed_data/
+set_01/
+set_02/
+set_03/
+set_04/
+.env
+.DS_Store
+Thumbs.db

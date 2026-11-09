@@ -1,0 +1,4 @@
+method,threshold_policy,threshold,training_attack_records,test_records,accuracy,precision,recall,f1,fpr,roc_auc,pr_auc,tn,fp,fn,tp,inference_time_seconds,training_time_seconds
+FedGAN-ID-inspired energy (max known-attack train energy),maximum energy among non-BENIGN training rows,-3.6823291778564453,27807.0,882269.0,0.9763790861970669,0.0,0.0,0.0,1.74126234555003e-05,0.23246147027493347,0.014056843275088958,861429.0,15.0,20825.0,0.0,0.2931230999529362,
+Our energy OOD baseline,99th percentile of full known-class calibration energy,-3.574654,,,0.976385886844035,0.0,0.0,0.0,1.044757407330018e-05,0.23246146982899196,0.014056843131796577,,,,,0.25255180010572076,132.92397490004078
+Representation + Isolation Forest,99th percentile of benign calibration anomaly scores,0.16333903298729044,,,0.9707504173897077,0.30683316528348714,0.1899639855942377,0.23465211459754434,0.01037444105478708,0.9423374088097635,0.429877851288102,,,,,,

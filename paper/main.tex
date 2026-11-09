@@ -1,0 +1,204 @@
+\documentclass[journal]{IEEEtran}
+\usepackage{amsmath,amssymb,booktabs,array,url,cite,balance,graphicx}
+\usepackage[hidelinks]{hyperref}
+
+\title{Representation-Based Anomaly Detection for Unknown Attacks in In-Vehicle CAN Networks: An Experimental Study}
+\author{Adda~Surendra, Gera~Vignan, and Vundadi~Mani~Kumar%
+\thanks{The authors are with the Department of Computer Science and Engineering (Data Science and Artificial Intelligence), Indian Institute of Information Technology Design and Manufacturing, Kancheepuram, India (e-mail: surendraadda@gmail.com; gvignankv@gmail.com; vundadimanikumar@gmail.com). This project was carried out under the guidance of Dr. Bhale Pradeepkumar Gajendra, Assistant Professor, Department of Computer Science and Engineering, IIITDM Kancheepuram.}}
+\markboth{Research Project Manuscript, November 2026}{Surendra \MakeLowercase{\textit{et al.}}: Representation-Based Anomaly Detection for In-Vehicle CAN Networks}
+\begin{document}
+\maketitle
+
+\begin{abstract}
+Controller Area Network (CAN) traffic is exchanged among electronic control units in modern vehicles, but the protocol provides limited protection against injected or manipulated messages. This paper reports an experimental study of unknown-attack detection using a neural feature representation followed by a benign-only Isolation Forest. A multilayer perceptron is trained to classify six known traffic classes from CAN identifiers, payload bytes, and timing-derived features. Its 64-dimensional hidden representation is used to fit an Isolation Forest using benign training records only. At the preselected 99th-percentile operating point derived from benign calibration scores, the detector obtains 30.68\% precision, 19.00\% recall, a 23.47\% F1-score, and a 1.04\% false-positive rate on the evaluated CAN-train-and-test v1.5 unknown-attack file. The continuous anomaly scores yield ROC-AUC of 0.9423 and PR-AUC of 0.4299. A less conservative 97.5th-percentile setting yields 49.37\% F1 and 62.53\% recall, but is reported only as exploratory because the same test set had been inspected during earlier threshold analysis. Detection also varies by family: at the primary operating point, recall is 65.27\% for FUZZING and below 6\% for SYSTEMATIC, while DOUBLE, INTERVAL, SPEED, and TRIPLE are not detected. These findings show that ranking quality and threshold-specific detection performance can differ substantially. The implementation is an MLP-representation and Isolation Forest study inspired by the unknown-attack problem in FedGAN-ID; it does not implement that paper's GAN, federated learning, or differential-privacy components.
+\end{abstract}
+\begin{IEEEkeywords}
+Controller Area Network, in-vehicle network security, intrusion detection, unknown attack detection, anomaly detection, Isolation Forest, feature representation.
+\end{IEEEkeywords}
+
+\section{Introduction}
+Modern vehicles rely on networks of electronic control units (ECUs) to exchange information about powertrain, braking, steering, and other functions. The Controller Area Network (CAN) remains an important in-vehicle communication technology. CAN frames are broadcast on a shared bus, and the protocol itself does not provide strong message authentication. Consequently, an adversary with access to the network may inject, replay, or manipulate frames. An intrusion detection system (IDS) can monitor message content and temporal behaviour to identify suspicious traffic.
+
+CAN IDS methods use message identifiers, payload content, transmission frequency, message sequences, or physical-layer characteristics. Each signal source captures only part of the behaviour. A frequency-based detector can be effective when an attack changes message rates, but it may be less informative when injected frames resemble legitimate traffic in their timing. Content-based methods can detect payload changes, although their performance depends on the representation and training coverage.
+
+FedGAN-ID combines CAN message graph construction, a GAN-based detector, federated learning (FL), differential privacy (DP), and energy-based out-of-distribution (OOD) detection \cite{chen2025fedgan}. The present work is inspired by the unknown-attack detection problem discussed in that study. It does not implement the complete FedGAN-ID system. Instead, it investigates a smaller pipeline using a supervised neural representation followed by a benign-only anomaly detector.
+
+The study asks whether a hidden representation learned from known CAN classes can support detection of attack families excluded from classifier training, how an Isolation Forest behaves at a threshold calibrated from benign traffic, and which unknown attack families remain difficult to detect. The contribution is an empirical analysis of this pipeline and its failure modes, rather than a claim of a new GAN or federated-learning architecture.
+
+\section{Related Work}
+CAN IDS research has explored message frequency, payload content, message sequences, and physical-layer properties. Frequency-oriented methods exploit changes in message rates, while content-oriented methods examine identifiers and data fields. Sequence-aware approaches model relationships between consecutive messages. These approaches motivate using both payload and timing information when representing CAN traffic.
+
+Chen \textit{et al.} proposed FedGAN-ID for in-vehicle networks \cite{chen2025fedgan}. Their design constructs message graphs using CAN identifiers, message content, and timestamps; applies a two-level detector; uses GAN-based modelling; and coordinates learning across vehicles with privacy protection. The paper also uses energy-based OOD detection for potential unknown attacks. Its experiments include three XPeng vehicles. Those results are not directly comparable with this study because the datasets, attack definitions, model architecture, hardware, and evaluation protocol differ.
+
+Isolation Forest isolates observations through random partitioning and is suitable for benign-only training because it does not require attack labels to fit the anomaly detector \cite{liu2008isolation}. A neural representation can provide transformed features for a downstream detector; however, a representation trained to classify known classes is not guaranteed to preserve features needed to identify every unseen class.
+
+\section{Dataset and Problem Formulation}
+\subsection{Dataset}
+Experiments use the CAN-train-and-test v1.5 dataset and its capture organization \cite{cantrainrepo}. The known-class training split contains BENIGN traffic and five known attack classes: DoS, FORCE\_NEUTRAL, FUZZING\_TARGETED, RPM, and STANDSTILL. The unknown evaluation file contains BENIGN traffic and six attack families treated as unknown to the classifier: DOUBLE, FUZZING, INTERVAL, SPEED, SYSTEMATIC, and TRIPLE.
+
+The processed training file contains 461,345 records, including 433,538 benign and 27,807 attack records. The calibration file contains 492,435 records, including 463,134 benign records. The unknown-test file contains 882,269 records: 861,444 benign and 20,825 attack records. Benign traffic was subsampled during preprocessing (10\% sampling per capture, with a maximum of 100,000 benign records per file), while attack records were retained. Thus, test-set class prevalence reflects preprocessing and should not be interpreted as natural attack prevalence in deployed traffic.
+
+\subsection{Features and Labels}
+Each record is represented by 13 numerical features: CAN identifier, payload length, eight payload-byte values, inter-arrival time, same-identifier inter-arrival time, and a rolling mean of inter-arrival time. Absolute timestamps are not supplied to the classifier. Temporal features are computed in capture order. The binary evaluation label is benign when the ground-truth label is BENIGN and attack otherwise.
+
+\subsection{Unknown-Attack Setting}
+The classifier is trained only on BENIGN, DoS, FORCE\_NEUTRAL, FUZZING\_TARGETED, RPM, and STANDSTILL. The six families in the unknown-test file are excluded from classifier training and evaluated as a single unknown/attack class. The anomaly detector is fitted using benign training representations only.
+
+\section{Methodology}
+Fig.~\ref{fig:pipeline} summarises the implemented processing pipeline.
+\begin{figure}[!t]
+\centering
+\includegraphics[width=\columnwidth]{images/method_pipeline.png}
+\caption{Implemented representation-based anomaly detection pipeline.}
+\label{fig:pipeline}
+\end{figure}
+\subsection{Known-Class Neural Representation}
+A multilayer perceptron (MLP) is trained on the 13 input features to classify the six known classes. The network uses fully connected layers with 128 and 64 hidden units, ReLU activations, dropout of 0.2, and a six-unit output layer. Standardisation parameters are estimated from training data and applied to calibration and test data. The model is trained with Adam using a learning rate of 0.001 for 25 epochs. Class weights are used to reduce the effect of imbalance among known classes.
+
+The 64-dimensional hidden activation immediately before the output layer is extracted as the learned representation, denoted by $\mathbf{z}=f_{\theta}(\mathbf{x})\in\mathbb{R}^{64}$.
+
+\subsection{Benign-Only Isolation Forest}
+An Isolation Forest is fitted to the learned representations of benign training records. The detector uses 300 trees, a maximum sample size of 2048, and a fixed random seed of 42. The anomaly score $s(\mathbf{z})$ is oriented so that larger values indicate more anomalous observations. The detector is not fitted using attack labels.
+
+\subsection{Calibration Threshold}
+The threshold is determined from benign calibration scores, without using unknown-test labels. Let $\mathcal{S}_{cal}^{B}$ denote the anomaly scores of benign calibration records. The operating threshold is
+\begin{equation}
+\tau_{99} = Q_{0.99}(\mathcal{S}_{cal}^{B}),
+\label{eq:threshold}
+\end{equation}
+where $Q_{0.99}$ is the empirical 99th percentile. This was the initially selected operating point and is used as the primary result. A test record is flagged as anomalous when
+\begin{equation}
+\hat{y} =
+\begin{cases}
+1, & s(\mathbf{z}) > \tau_{99},\\
+0, & \text{otherwise}.
+\end{cases}
+\label{eq:decision}
+\end{equation}
+For the learned-representation detector, this primary threshold is 0.1633390. The calibration quantile sets a nominal upper-tail operating point; the false-positive rate observed on the separate test file can differ under distribution shift.
+
+\subsection{Evaluation Metrics}
+We report accuracy, precision, recall, F1-score, false-positive rate (FPR), receiver operating characteristic area (ROC-AUC), and precision-recall area (PR-AUC). For the positive attack class, precision is $TP/(TP+FP)$, recall is $TP/(TP+FN)$, and F1 is the harmonic mean of precision and recall. FPR is $FP/(FP+TN)$. ROC-AUC and PR-AUC are computed from continuous anomaly scores.
+
+\section{Experimental Results}
+\subsection{Primary Operating Point: 99th Percentile}
+The primary result uses the 99th percentile of benign calibration anomaly scores, with threshold $\tau_{99}=0.1633390$. This operating point was selected in the initial experiment before the subsequent exploratory threshold sweep. Table~\ref{tab:overall} reports the resulting metrics. The detector identifies 3,956 of 20,825 unknown attack records and incorrectly flags 8,937 benign records. It misses 16,869 attack records. Accuracy is 97.08\%; however, because benign records dominate the processed test set, accuracy should be considered together with precision, recall, and F1-score.
+
+\begin{table}[!t]
+\caption{Primary Unknown-Attack Result at the 99th-Percentile Threshold}
+\label{tab:overall}
+\centering\footnotesize
+\begin{tabular}{lc}
+\toprule Metric & Result\\ \midrule
+Threshold & 0.1633390\\
+Accuracy & 97.08\%\\
+Precision & 30.68\%\\
+Recall & 19.00\%\\
+F1-score & 23.47\%\\
+False-positive rate & 1.04\%\\
+ROC-AUC & 0.9423\\
+PR-AUC & 0.4299\\
+TP / FP & 3,956 / 8,937\\
+TN / FN & 852,507 / 16,869\\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsection{Primary Attack-Family Results}
+Table~\ref{tab:families} reports recall for each unknown family at the primary 99th-percentile threshold. The detector identifies FUZZING more often than the other families, while the recall for DOUBLE, INTERVAL, SPEED, and TRIPLE is zero at this operating point. SYSTEMATIC recall is 5.37\%. This family-level breakdown shows that the aggregate score does not indicate uniform unknown-attack detection.
+
+\begin{table}[!t]
+\caption{Unknown Attack-Family Recall at the Primary 99th-Percentile Threshold}
+\label{tab:families}
+\centering\footnotesize
+\begin{tabular}{lrr}
+\toprule Family & Detected / Total & Recall\\ \midrule
+DOUBLE & 0 / 1,292 & 0.00\%\\
+FUZZING & 3,900 / 5,975 & 65.27\%\\
+INTERVAL & 0 / 4,418 & 0.00\%\\
+SPEED & 0 / 5,321 & 0.00\%\\
+SYSTEMATIC & 56 / 1,043 & 5.37\%\\
+TRIPLE & 0 / 2,776 & 0.00\%\\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsection{Exploratory 97.5th-Percentile Operating Point}
+An additional threshold analysis evaluated the 97.5th percentile of benign calibration scores, giving $\tau_{97.5}=0.0243811$. The threshold value itself is computed from benign calibration scores; however, the choice to examine and highlight the 97.5th-percentile operating point followed earlier inspection of unknown-test performance during threshold exploration. It is therefore reported as exploratory and must not be treated as an independent confirmatory result. Table~\ref{tab:explore} records the observed test metrics without replacing the primary 99th-percentile result.
+
+\begin{table}[!t]
+\caption{Exploratory Result at the 97.5th-Percentile Threshold}
+\label{tab:explore}
+\centering\footnotesize
+\begin{tabular}{lc}
+\toprule Metric & Exploratory result\\ \midrule
+Threshold & 0.0243811\\
+Accuracy & 96.97\%\\
+Precision & 40.79\%\\
+Recall & 62.53\%\\
+F1-score & 49.37\%\\
+False-positive rate & 2.19\%\\
+ROC-AUC & 0.9423\\
+PR-AUC & 0.4299\\
+TP / FP & 13,022 / 18,905\\
+TN / FN & 842,539 / 7,803\\
+\bottomrule
+\end{tabular}
+\end{table}
+
+At the exploratory threshold, recall by family was 9.06\% for DOUBLE (117/1,292), 80.52\% for FUZZING (4,811/5,975), 96.42\% for INTERVAL (4,260/4,418), 60.27\% for SPEED (3,207/5,321), 34.32\% for SYSTEMATIC (358/1,043), and 9.69\% for TRIPLE (269/2,776). The increase in recall and F1 is accompanied by an increase in FPR from 1.04\% at the primary threshold to 2.19\% at the exploratory threshold.
+
+\subsection{Baseline and Method Comparison}
+Table~\ref{tab:comparison} compares previously executed experiments on the same processed CAN test file. At the primary 99th-percentile operating point, the embedding-based detector has a lower F1-score than the original-feature Isolation Forest (23.47\% versus 28.94\%). However, the embedding detector's continuous scores have higher ROC-AUC and PR-AUC (0.9423 and 0.4299) than the original-feature detector (0.6303 and 0.2006), indicating better score ranking despite the lower F1 at the selected threshold. The exploratory 97.5th-percentile result is included for transparency, not as the primary result. The energy-OOD experiments and maximum-training-energy adaptation detected no unknown attack records. These are internal comparisons and are not direct comparisons with FedGAN-ID's published private-vehicle results.
+
+\begin{table}[!t]
+\caption{Previously Executed CAN Experiments on the Same Processed Test File}
+\label{tab:comparison}
+\centering\footnotesize
+\begin{tabular}{lrrr}
+\toprule Method / operating point & F1 & Recall & FPR\\ \midrule
+Original-feature IF, 99th & 28.94\% & 24.47\% & 1.08\%\\
+Energy OOD & 0.00\% & 0.00\% & 0.001\%\\
+Embedding IF, 99th (primary) & 23.47\% & 19.00\% & 1.04\%\\
+Embedding IF, 97.5th (exploratory) & 49.37\% & 62.53\% & 2.19\%\\
+Maximum training-energy threshold & 0.00\% & 0.00\% & 0.0017\%\\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\begin{figure}[!t]
+\centering
+\includegraphics[width=\columnwidth]{images/confusion_matrix.png}
+\caption{Confusion matrix at the exploratory 97.5th-percentile operating point.}
+\label{fig:confusion}
+\end{figure}
+\begin{figure}[!t]
+\centering
+\includegraphics[width=\columnwidth]{images/method_comparison.png}
+\caption{F1-score comparison across executed experiments; the 97.5th-percentile result is exploratory.}
+\label{fig:methodcomparison}
+\end{figure}
+\subsection{Score and Feature Diagnostics}
+Anomaly-score summaries showed substantial overlap between DOUBLE, TRIPLE, and benign scores. Their median anomaly scores were $-0.1089$ and $0.0067$, respectively, compared with $-0.1314$ for benign records. FUZZING and INTERVAL had higher medians (0.2973 and 0.0450). These descriptive statistics are consistent with family-level recall but do not establish the cause of detection differences.
+
+Timing summaries also differed across groups. Median inter-arrival time was 0.0138 ms for benign traffic, 0.8030 ms for DOUBLE, and 0.7639 ms for TRIPLE. Median payload length was 8 bytes for benign traffic, 7 for DOUBLE, and 5 for TRIPLE. These marginal statistics suggest potentially informative signals, but the current detector does not exploit them reliably for all families. A sequence-level investigation is left for future work.
+
+\section{Discussion}
+At the primary 99th-percentile operating point, the representation-based detector achieves an F1-score of 23.47\% and recall of 19.00\%. This is lower than the original-feature Isolation Forest baseline's F1-score of 28.94\%, although the embedding-based anomaly scores provide higher ROC-AUC and PR-AUC. This distinction matters: score ranking can improve without producing a better result at a particular threshold. The primary family-level results also show that the detector is not reliable across all unknown attack families.
+
+The exploratory 97.5th-percentile threshold gives higher recall and F1, but also a higher false-positive rate. Because that operating point was highlighted after earlier inspection of the same unknown-test set, it is not evidence of a validated improvement. The threshold was numerically calculated from benign calibration samples, but the percentile choice was influenced by test-set exploration. A new untouched test capture is required to confirm whether the more permissive operating point generalises.
+
+The calibration percentile controls the empirical exceedance rate on benign calibration data; it does not guarantee an identical FPR under distribution shift. The observed results should therefore be interpreted as a dataset-specific diagnostic of the pipeline rather than a deployment-ready performance claim.
+
+\section{Limitations}
+This study is not a full reproduction of FedGAN-ID: no GAN, federated aggregation, differential privacy, CAN message graph, MTF, or READ module is implemented. The public dataset and attack taxonomy differ from the private XPeng dataset used in FedGAN-ID, so direct numerical superiority claims are unjustified. The unknown test file was inspected during exploratory analysis, weakening its independence for final assessment. Benign subsampling changes class prevalence and therefore affects precision and accuracy. Results are from one configured training run and do not include repeated-seed confidence intervals. Finally, deployment across vehicles and capture conditions requires additional validation.
+
+\section{Conclusion and Future Work}
+This paper presented an experimental study of unknown-attack detection using a neural representation learned from known CAN traffic and an Isolation Forest fitted on benign training representations. At the primary 99th-percentile threshold derived from benign calibration scores, the detector achieved 30.68\% precision, 19.00\% recall, and a 23.47\% F1-score with a 1.04\% false-positive rate. The anomaly scores provided ROC-AUC of 0.9423 and PR-AUC of 0.4299, but the family-level results showed that most unknown attack families were not detected at this conservative operating point. An exploratory 97.5th-percentile setting yielded 49.37\% F1 and 62.53\% recall at a 2.19\% FPR; because this operating point was examined after test-set exploration, it is not treated as a confirmatory result.
+
+The findings do not establish superiority over FedGAN-ID and should not be interpreted as a reproduction of its GAN, federated-learning, or differential-privacy components. Future work should evaluate the method on a newly collected, untouched test split; report repeated-run variability; investigate sequence-aware representations; assess calibration under vehicle and session shift; and compare methods under a common dataset and protocol. Federated training and privacy mechanisms remain possible extensions outside the implementation reported here.
+
+\balance
+\bibliographystyle{IEEEtran}
+\bibliography{references}
+\end{document}
